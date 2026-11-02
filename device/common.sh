@@ -52,6 +52,21 @@ trim_log() {
   return 0
 }
 
+# avahi-daemon даже с --no-drop-root делает getpwnam("avahi") при старте и падает
+# с кодом 255 ("Failed to find user 'avahi'."), если такого пользователя нет в
+# системе — а на прошивке колонки его нет. Заводим фиктивного системного
+# пользователя один раз; дальше проверка почти бесплатная (grep по /etc/passwd).
+ensure_avahi_user() {
+  grep -q '^avahi:' /etc/passwd 2>/dev/null && return 0
+  mount -o remount,rw / 2>/dev/null
+  grep -q '^avahi:' /etc/passwd 2>/dev/null ||
+    echo 'avahi:x:1002:1002:Avahi mDNS daemon:/var/run/avahi-daemon:/bin/false' >> /etc/passwd
+  grep -q '^avahi:' /etc/group 2>/dev/null ||
+    echo 'avahi:x:1002:' >> /etc/group
+  sync
+  mount -o remount,ro / 2>/dev/null
+}
+
 # Медиа-демон колонки (голос Алисы и её плеер). Лаунчер quasar поднимает его после
 # падения не сразу (до 600 с), поэтому поднимаем сами и следим, чтобы он был один:
 # два экземпляра дерутся за звук, и Алиса молчит.

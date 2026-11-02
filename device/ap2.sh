@@ -53,6 +53,7 @@ start_bus() {
 # Имя хоста avahi должно совпадать с тем, что публикует maind
 # (yandex-station-gen2-<id>), иначе mDNS-записи конфликтуют.
 run_avahi() {
+  ensure_avahi_user
   # avahi собран с /var/run; на колонке это ссылка на /run
   mkdir -p /run/avahi-daemon /var/run/avahi-daemon 2>/dev/null
   while :; do

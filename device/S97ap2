@@ -9,12 +9,20 @@ wait_for() { # секунд условие...
 }
 case "$1" in
   start)
-    (
-      wait_for 120 test -x "$AP/ap2.sh"
-      "$AP/ap2.sh" ssh
-      wait_for 120 test -e /dev/snd/pcmC0D0p
-      "$AP/ap2.sh" start
-    ) </dev/null >/dev/null 2>&1 &
+    # setsid отвязывает от текущей сессии: без этого фоновый job получает SIGHUP и
+    # гибнет, как только закрывается сессия, из которой был вызван старт (actual при
+    # запуске вручную через adb shell — adb закрывает сессию сразу после команды).
+    if command -v setsid >/dev/null 2>&1; then
+      setsid "$0" start-inner </dev/null >/dev/null 2>&1 &
+    else
+      ("$0" start-inner) </dev/null >/dev/null 2>&1 &
+    fi
+    ;;
+  start-inner)
+    wait_for 120 test -x "$AP/ap2.sh"
+    "$AP/ap2.sh" ssh
+    wait_for 120 test -e /dev/snd/pcmC0D0p
+    "$AP/ap2.sh" start
     ;;
   stop)
     [ -x "$AP/ap2.sh" ] && "$AP/ap2.sh" stop
