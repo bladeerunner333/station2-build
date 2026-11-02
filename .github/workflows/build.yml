@@ -7,26 +7,21 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up QEMU (arm64 emulation)
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
       - name: Build AirPlay 2 (shairport-sync + nqptp)
         run: |
           mkdir -p build/out
-          docker run --rm --platform linux/arm64 \
+          docker run --rm \
             -v "$PWD/build:/work" -v "$PWD/build/out:/out" \
             alpine:3.24 sh /work/ap2-build.sh
 
       - name: Build Spotify Connect (librespot)
         run: |
-          docker run --rm --platform linux/arm64 \
+          docker run --rm \
             -v "$PWD/build:/work" -v "$PWD/build/out:/out" \
             alpine:3.24 sh /work/spotify-build.sh
 
