@@ -1,0 +1,51 @@
+name: build-ap2-bundle
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU (arm64 emulation)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Build AirPlay 2 (shairport-sync + nqptp)
+        run: |
+          mkdir -p build/out
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD/build:/work" -v "$PWD/build/out:/out" \
+            alpine:3.24 sh /work/ap2-build.sh
+
+      - name: Build Spotify Connect (librespot)
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD/build:/work" -v "$PWD/build/out:/out" \
+            alpine:3.24 sh /work/spotify-build.sh
+
+      - name: Assemble device bundle
+        run: |
+          set -eu
+          OUT=bundle/ap2
+          mkdir -p "$OUT/etc"
+          cp -R build/out/ap2/bin build/out/ap2/lib "$OUT/"
+          cp device/ap2.sh device/common.sh device/audio-owner.sh \
+             device/spotify-sink.sh device/spotify-api.sh "$OUT/"
+          cp device/etc/* "$OUT/etc/"
+          cp device/S97ap2 bundle/
+          ls -la "$OUT/bin" "$OUT/lib"
+          tar -C bundle -czf ap2-bundle.tar.gz ap2 S97ap2
+          du -sh ap2-bundle.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ap2-bundle
+          path: ap2-bundle.tar.gz
+          retention-days: 7
