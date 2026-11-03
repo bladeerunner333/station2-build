@@ -412,12 +412,17 @@ func menuMarkup() string {
 	if !notifyOn() {
 		n = "🔕 Уведомления: выкл"
 	}
+	nb := "🎵 Нотный блок: выкл"
+	if nbActive() {
+		nb = "🎵 Нотный блок: вкл"
+	}
 	kb := [][]map[string]string{
 		{{"text": "🔉 −10", "callback_data": "vol-"}, {"text": "🔊 +10", "callback_data": "vol+"}, {"text": "🔈 Громкость?", "callback_data": "vol?"}},
 		{{"text": "⏮", "callback_data": "prev"}, {"text": "⏯", "callback_data": "toggle"}, {"text": "⏭", "callback_data": "next"}},
 		{{"text": "⏱ Таймер 5 мин", "callback_data": "timer5"}, {"text": "⏱ 10 мин", "callback_data": "timer10"}, {"text": "⏰ Будильники", "callback_data": "alarms"}},
 		{{"text": "🤫 Замолчи", "callback_data": "cancel"}, {"text": "📊 Статус", "callback_data": "status"}},
 		{{"text": "🔄 Перезапустить AirPlay/Spotify", "callback_data": "restart"}},
+		{{"text": nb, "callback_data": "noteblock"}},
 		{{"text": n, "callback_data": "notify"}},
 	}
 	b, _ := json.Marshal(map[string]any{"inline_keyboard": kb})
@@ -488,6 +493,20 @@ func handleCallback(id string, chat, msgID int64, data string) {
 		toast(id, "Перезапускаю, ~30 с")
 		sh(90*time.Second, apDir+"/ap2.sh", "restart")
 		send(chat, "AirPlay/Spotify перезапущены.")
+	case "noteblock":
+		if nbActive() {
+			nbStop()
+			toast(id, "Нотный блок выключен")
+		} else if err := nbStart(-1); err != nil {
+			toast(id, "Не вышло: "+err.Error())
+		} else {
+			toast(id, "Нотный блок включён: жми кнопку Алисы")
+		}
+		api("editMessageReplyMarkup", url.Values{
+			"chat_id":      {strconv.FormatInt(chat, 10)},
+			"message_id":   {strconv.FormatInt(msgID, 10)},
+			"reply_markup": {menuMarkup()},
+		}, nil)
 	case "notify":
 		f := apDir + "/etc/tgbot.notify-off"
 		if notifyOn() {
@@ -523,6 +542,7 @@ const help = `Пульт — /menu (кнопки).
 /say текст — произнести текст голосом Алисы (без выполнения)
 /vol, /vol 40 — громкость
 /status, /restart — AirPlay/Spotify
+/noteblock — кнопка Алисы играет ноты из Minecraft (/noteblock бас, /noteblock off)
 /notify on|off — уведомления
 /ip — адрес колонки`
 
@@ -620,6 +640,8 @@ func handle(chat int64, text string) {
 		player("l", "Предыдущий трек.")
 	case "/stop":
 		player("c", "Алиса прервана.")
+	case "/noteblock", "/nb":
+		handleNoteblock(chat, arg)
 	case "/notify":
 		f := apDir + "/etc/tgbot.notify-off"
 		switch strings.ToLower(arg) {
@@ -747,6 +769,7 @@ func setCommands() {
 		{"command": "next", "description": "Следующий трек"},
 		{"command": "vol", "description": "Громкость: /vol 40"},
 		{"command": "say", "description": "Произнести текст"},
+		{"command": "noteblock", "description": "Нотный блок на кнопке Алисы"},
 		{"command": "status", "description": "Статус AirPlay/Spotify"},
 		{"command": "help", "description": "Все команды"},
 	}
