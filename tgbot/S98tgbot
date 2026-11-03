@@ -1,0 +1,7 @@
+#!/bin/sh
+# Автозапуск Telegram-бота (tgbot.sh). Без etc/tgbot.conf бот не стартует.
+case "$1" in
+  start) [ -f /data/local/opt/ap2/etc/tgbot.conf ] && /data/local/opt/ap2/tgbot.sh start ;;
+  stop) /data/local/opt/ap2/tgbot.sh stop ;;
+esac
+exit 0

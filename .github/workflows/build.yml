@@ -25,6 +25,15 @@ jobs:
             -v "$PWD/build:/work" -v "$PWD/build/out:/out" \
             alpine:3.24 sh /work/spotify-build.sh
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Build Telegram bot
+        run: |
+          cd tgbot
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o tgbot .
+
       - name: Assemble device bundle
         run: |
           set -eu
@@ -34,9 +43,11 @@ jobs:
           cp device/ap2.sh device/common.sh device/audio-owner.sh \
              device/spotify-sink.sh device/spotify-api.sh "$OUT/"
           cp device/etc/* "$OUT/etc/"
-          cp device/S97ap2 bundle/
+          cp tgbot/tgbot "$OUT/bin/"
+          cp tgbot/tgbot.sh "$OUT/"
+          cp device/S97ap2 tgbot/S98tgbot bundle/
           ls -la "$OUT/bin" "$OUT/lib"
-          tar -C bundle -czf ap2-bundle.tar.gz ap2 S97ap2
+          tar -C bundle -czf ap2-bundle.tar.gz ap2 S97ap2 S98tgbot
           du -sh ap2-bundle.tar.gz
 
       - uses: actions/upload-artifact@v4

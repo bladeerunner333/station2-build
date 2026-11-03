@@ -19,6 +19,10 @@ case "$1" in
     sleep 10
     while :; do
       [ -f "$LOG" ] && [ "$(wc -c < "$LOG")" -gt 262144 ] && : > "$LOG"
+      # api.telegram.org у провайдера может быть закрыт: PROXY=socks5://ip:порт или
+      # http://ip:порт в tgbot.conf пускает бота через прокси (VPN-клиент на компе/роутере)
+      proxy=$(sed -n 's/^PROXY=//p' "$AP/etc/tgbot.conf" 2>/dev/null | tr -d '"'"'" | head -1)
+      if [ -n "$proxy" ]; then export HTTPS_PROXY="$proxy"; else unset HTTPS_PROXY; fi
       "$AP/bin/tgbot" >> "$LOG" 2>&1
       echo "$(date): tgbot завершился, код $?" >> "$LOG"
       sleep 10

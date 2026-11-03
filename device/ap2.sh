@@ -66,6 +66,33 @@ run_avahi() {
   done
 }
 
+# Если etc/hostname нет, avahi стартует с `hostname` (Yandex-Station-gen2), а адрес
+# под этим именем никто не публикует: iPhone видит AirPlay, но не может узнать IP
+# и сразу пишет «Unable to Connect». Узнаём имя maind обратным mDNS-запросом своего
+# IP, сохраняем и перезапускаем avahi уже с ним.
+detect_hostname() {
+  [ -s "$E/hostname" ] && return 0
+  ip=$(ifconfig wlan0 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]*\).*/\1/p' | head -1)
+  [ -n "$ip" ] || ip=$(ip -4 addr show wlan0 2>/dev/null | sed -n 's/.*inet \([0-9.]*\).*/\1/p' | head -1)
+  [ -n "$ip" ] || return 0
+  name=""
+  for i in 1 2 3 4 5; do
+    name=$("$B/dbus-send" --bus="$DBUS_SYSTEM_BUS_ADDRESS" --print-reply --reply-timeout=5000 \
+      --dest=org.freedesktop.Avahi / org.freedesktop.Avahi.Server.ResolveAddress \
+      int32:-1 int32:0 string:"$ip" uint32:0 2>/dev/null |
+      grep -o '"[^"]*\.local"' | tr -d '"' | head -1)
+    [ -n "$name" ] && break
+    sleep 2
+  done
+  name=${name%.local}
+  [ -n "$name" ] || { echo "$(date): имя maind не найдено" >> "$LOGD/avahi.log"; return 0; }
+  echo "$name" > "$E/hostname"
+  echo "$(date): имя maind $name, перезапускаю avahi" >> "$LOGD/avahi.log"
+  # run_avahi сам поднимет демон заново, уже с новым именем
+  for p in $(pids_matching avahi-daemon); do kill "$p" 2>/dev/null; done
+  sleep 5
+}
+
 # Системный alsa.conf тянет 32-битные плагины, поэтому у приёмника свой конфиг.
 run_sps() {
   export ALSA_CONFIG_PATH=$E/asound.conf
@@ -149,6 +176,7 @@ start_all() {
     spawn /run/ap2-avahi.pid /bin/sh "$SELF" run-avahi
     sleep 3
   fi
+  detect_hostname
   # nqptp должен быть ровно один и стартовать раньше приёмника
   if [ -z "$(pids_matching "$B/nqptp")" ]; then
     spawn /run/ap2-nqptp.pid "$B/nqptp"

@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Станция 2 — панель</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --border: #2a2e38;
+    --text: #e6e8eb; --muted: #9aa1ad; --accent: #4f8cff; --ok: #3ecf8e; --err: #ff5c6c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+    font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+    display: flex; justify-content: center; padding: 24px 16px;
+  }
+  .wrap { width: 100%; max-width: 640px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px; margin-bottom: 14px;
+  }
+  label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 6px; }
+  input[type=text] {
+    width: 100%; background: #0c0e12; border: 1px solid var(--border); color: var(--text);
+    border-radius: 8px; padding: 10px 12px; font-size: 15px; outline: none;
+  }
+  input[type=text]:focus { border-color: var(--accent); }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+  button {
+    flex: 1 1 auto; min-width: 140px; background: var(--accent); color: white; border: none;
+    border-radius: 8px; padding: 12px 14px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  button:active { opacity: 0.85; }
+  button.secondary { background: #2a2e38; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  pre#log {
+    background: #0a0b0e; border: 1px solid var(--border); border-radius: 8px; padding: 12px;
+    font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+    max-height: 360px; overflow-y: auto; margin: 0;
+  }
+  .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--muted); }
+  .status-dot.busy { background: #e2b93b; }
+  .status-dot.ok { background: var(--ok); }
+  .status-dot.err { background: var(--err); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Яндекс Станция 2 — панель управления</h1>
+  <div class="sub">AirPlay + Spotify Connect, без PowerShell</div>
+
+  <div class="card">
+    <label for="ip">IP-адрес колонки в локальной сети</label>
+    <input type="text" id="ip" placeholder="например 192.168.0.45">
+    <div class="row">
+      <button class="secondary" onclick="run('connect')">Проверить подключение</button>
+      <button class="secondary" onclick="run('status')">Статус служб</button>
+    </div>
+    <div class="row">
+      <button onclick="run('deploy')">Установить AirPlay + Spotify</button>
+      <button class="secondary" onclick="run('restart')">Перезапустить службы</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <label for="cmd">Произвольная команда на колонке (диагностика)</label>
+    <input type="text" id="cmd" placeholder="например ls -la /data/local/opt/ap2/bin">
+    <div class="row">
+      <button class="secondary" onclick="runRaw()">Выполнить</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <label>Вход в Spotify (разовая авторизация, один раз)</label>
+    <div class="row">
+      <button class="secondary" onclick="oauthStart()">Начать вход</button>
+      <button class="secondary" onclick="oauthPoll()">Проверить вывод</button>
+    </div>
+    <label for="oauthUrl" style="margin-top:12px;">Ссылка, которую вернул Spotify после входа (вставь сюда)</label>
+    <input type="text" id="oauthUrl" placeholder="https://... (вставь ссылку из адресной строки после входа)">
+    <div class="row">
+      <button onclick="oauthFinish()">Отправить ссылку</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div style="margin-bottom:8px;"><span class="status-dot" id="dot"></span><span id="statusText">готово</span></div>
+    <pre id="log">Лог появится здесь...</pre>
+  </div>
+</div>
+
+<script>
+const ipInput = document.getElementById('ip');
+const log = document.getElementById('log');
+const dot = document.getElementById('dot');
+const statusText = document.getElementById('statusText');
+
+ipInput.value = localStorage.getItem('station_ip') || '';
+ipInput.addEventListener('change', () => localStorage.setItem('station_ip', ipInput.value.trim()));
+
+async function run(action) {
+  const ip = ipInput.value.trim();
+  if (!ip) { alert('Укажи IP колонки'); return; }
+  localStorage.setItem('station_ip', ip);
+  dot.className = 'status-dot busy';
+  statusText.textContent = 'выполняется: ' + action + '...';
+  log.textContent = '';
+  document.querySelectorAll('button').forEach(b => b.disabled = true);
+  try {
+    const res = await fetch('/api/' + action, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ip })
+    });
+    const data = await res.json();
+    log.textContent = data.output || '(пусто)';
+    const failed = /ОШИБКА|error|refused|not found/i.test(data.output || '') && !/DEPLOY_OK/.test(data.output || '');
+    dot.className = 'status-dot ' + (failed ? 'err' : 'ok');
+    statusText.textContent = failed ? 'ошибка' : 'готово';
+  } catch (e) {
+    log.textContent = 'Не удалось связаться с сервером панели: ' + e;
+    dot.className = 'status-dot err';
+    statusText.textContent = 'ошибка';
+  } finally {
+    document.querySelectorAll('button').forEach(b => b.disabled = false);
+  }
+}
+
+async function runRaw() {
+  const ip = ipInput.value.trim();
+  const cmd = document.getElementById('cmd').value.trim();
+  if (!ip) { alert('Укажи IP колонки'); return; }
+  if (!cmd) { alert('Укажи команду'); return; }
+  dot.className = 'status-dot busy';
+  statusText.textContent = 'выполняется: raw...';
+  log.textContent = '';
+  document.querySelectorAll('button').forEach(b => b.disabled = true);
+  try {
+    const res = await fetch('/api/raw', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ip, cmd })
+    });
+    const data = await res.json();
+    log.textContent = data.output || '(пусто)';
+    dot.className = 'status-dot ok';
+    statusText.textContent = 'готово';
+  } catch (e) {
+    log.textContent = 'Не удалось связаться с сервером панели: ' + e;
+    dot.className = 'status-dot err';
+    statusText.textContent = 'ошибка';
+  } finally {
+    document.querySelectorAll('button').forEach(b => b.disabled = false);
+  }
+}
+
+async function oauthCall(action, extra) {
+  const ip = ipInput.value.trim();
+  if (!ip) { alert('Укажи IP колонки'); return; }
+  dot.className = 'status-dot busy';
+  statusText.textContent = 'выполняется: ' + action + '...';
+  log.textContent = '';
+  document.querySelectorAll('button').forEach(b => b.disabled = true);
+  try {
+    const body = Object.assign({ ip }, extra || {});
+    const res = await fetch('/api/' + action, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    log.textContent = data.output || '(пусто)';
+    dot.className = 'status-dot ok';
+    statusText.textContent = 'готово';
+  } catch (e) {
+    log.textContent = 'Не удалось связаться с сервером панели: ' + e;
+    dot.className = 'status-dot err';
+    statusText.textContent = 'ошибка';
+  } finally {
+    document.querySelectorAll('button').forEach(b => b.disabled = false);
+  }
+}
+
+function oauthStart() { oauthCall('oauth-start'); }
+function oauthPoll() { oauthCall('oauth-poll'); }
+function oauthFinish() {
+  const url = document.getElementById('oauthUrl').value.trim();
+  if (!url) { alert('Вставь ссылку'); return; }
+  oauthCall('oauth-finish', { url });
+}
+</script>
+</body>
+</html>
