@@ -75,10 +75,23 @@ start_mediad() {
   PIDS=$(pids_matching "$MEDIAD_MATCH")
   N=$(printf '%s\n' "$PIDS" | grep -c .)
   if [ "$N" -gt 1 ]; then
-    for p in $PIDS; do kill -9 "$p" 2>/dev/null; done
-    sleep 2
-    echo "$(date): убрал дубли mediad (было $N)" >> "$LOGD/owner.log"
-    N=0
+    # Дубль появляется, когда лаунчер quasar (через ~10 мин после нашего kill) поднимает
+    # свой mediad, а наш ещё жив. Раньше убивали оба — лаунчер снова ждал 10 мин, и так
+    # по кругу каждые 10 минут. Теперь оставляем его экземпляр, убираем только наш.
+    LPID=$(pids_matching quasar_launcher | head -1)
+    for p in $PIDS; do
+      pp=$(awk '{print $4}' "/proc/$p/stat" 2>/dev/null)
+      [ -n "$LPID" ] && [ "$pp" = "$LPID" ] && continue
+      kill -9 "$p" 2>/dev/null
+    done
+    sleep 1
+    echo "$(date): убрал наш дубль mediad (было $N)" >> "$LOGD/owner.log"
+    N=$(pids_matching "$MEDIAD_MATCH" | grep -c .)
+    if [ "$N" -gt 1 ]; then
+      for p in $(pids_matching "$MEDIAD_MATCH"); do kill -9 "$p" 2>/dev/null; done
+      sleep 2
+      N=0
+    fi
   fi
   if [ "$N" -eq 0 ]; then
     cd /data/quasar 2>/dev/null || cd /

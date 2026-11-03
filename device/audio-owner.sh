@@ -51,13 +51,16 @@ youtube_playing() {
 
 # Супервизор quasar поднимает mediad обратно, поэтому одного kill мало:
 # добиваем, пока приёмник реально не займёт устройство.
+# Лаунчер поднимает mediad и посреди сессии (раз в ~10 мин). Даже без доступа к
+# устройству новый mediad при старте перенастраивает звук — в эфире это провал на
+# несколько секунд. Поэтому во время AirPlay mediad гасим всегда, а не только пока
+# приёмник ещё не занял устройство.
 release_for_airplay() {
   i=0
   while [ "$i" -lt 40 ]; do
+    for P in $(pids_matching "$MEDIAD_MATCH"); do kill -9 "$P" 2>/dev/null; done
     sp_holds_pcm && return 0
     airplay_session || return 0
-    P=$(pids_matching "$MEDIAD_MATCH" | head -1)
-    [ -n "$P" ] && kill -9 "$P" 2>/dev/null
     sleep 0.3
     i=$((i+1))
   done
@@ -132,5 +135,6 @@ while :; do
     esac
     STATE=idle
   fi
-  sleep 2
+  # во время AirPlay проверяем чаще: новый mediad успевает меньше
+  if [ "$STATE" = airplay ]; then sleep 1; else sleep 2; fi
 done
