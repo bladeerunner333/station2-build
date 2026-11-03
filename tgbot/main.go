@@ -1,5 +1,7 @@
-// tgbot — Telegram-бот на самой Станции 2: озвучка текста голосом Алисы, громкость,
-// статус и перезапуск AirPlay/Spotify. Long polling, без входящих портов.
+// tgbot — Telegram-бот на самой Станции 2: команды Алисе текстом, плеер, таймеры,
+// озвучка текста, громкость, статус AirPlay/Spotify, уведомления. Long polling, без
+// входящих портов. Команды Алисе и плеер — через встроенный пульт прошивки
+// (maind --cli), озвучка — через локальный канал 127.0.0.1:9875.
 // Слушается только одного Telegram-пользователя (ALLOWED_ID в конфиге).
 //
 // Конфиг: /data/local/opt/ap2/etc/tgbot.conf
@@ -24,6 +26,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -68,17 +71,31 @@ func loadConf() error {
 
 // ---- Telegram API ----
 
+type chatRef struct {
+	ID int64 `json:"id"`
+}
+
 type update struct {
 	UpdateID int64 `json:"update_id"`
 	Message  *struct {
-		Chat struct {
-			ID int64 `json:"id"`
-		} `json:"chat"`
-		From *struct {
+		MessageID int64   `json:"message_id"`
+		Chat      chatRef `json:"chat"`
+		From      *struct {
 			ID int64 `json:"id"`
 		} `json:"from"`
 		Text string `json:"text"`
 	} `json:"message"`
+	Callback *struct {
+		ID   string `json:"id"`
+		From struct {
+			ID int64 `json:"id"`
+		} `json:"from"`
+		Message *struct {
+			MessageID int64   `json:"message_id"`
+			Chat      chatRef `json:"chat"`
+		} `json:"message"`
+		Data string `json:"data"`
+	} `json:"callback_query"`
 }
 
 func api(method string, params url.Values, out any) error {
@@ -283,11 +300,172 @@ func volume() string {
 	return out
 }
 
-const help = `Команды:
-/say текст — Алиса произнесёт текст (или просто напиши текст)
-/vol — текущая громкость, /vol 40 — поставить 40%
-/status — статус AirPlay/Spotify
-/restart — перезапустить AirPlay/Spotify
+// ---- встроенный пульт прошивки: maind --cli ----
+// Команды пульта — по символу на строку: q — текстовый запрос Алисе (следующей строкой
+// текст), p — пауза/продолжить, o — пауза, n — дальше, l — назад, c — прервать Алису.
+// Проверено на Станции 2: запрос уходит в Алису как Vins.TextInput, без облачных токенов.
+
+var cliMu sync.Mutex
+
+func aliceCLI(lines ...string) error {
+	cliMu.Lock()
+	defer cliMu.Unlock()
+	cmd := exec.Command("/system/vendor/quasar/maind", "--cli")
+	cmd.Env = append(os.Environ(), "LD_LIBRARY_PATH=/system/vendor/quasar/libs")
+	cmd.Dir = "/tmp"
+	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
+	in, err := cmd.StdinPipe()
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("пульт Алисы не запустился: %v", err)
+	}
+	// пульту нужно подключиться к демонам, иначе первые символы теряются
+	time.Sleep(2 * time.Second)
+	for _, l := range lines {
+		io.WriteString(in, l+"\n")
+		time.Sleep(700 * time.Millisecond)
+	}
+	// даём команде уйти и закрываем пульт
+	time.Sleep(3 * time.Second)
+	io.WriteString(in, "x\n")
+	in.Close()
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		cmd.Process.Kill()
+		<-done
+	}
+	return nil
+}
+
+func askAlice(text string) error {
+	text = strings.Join(strings.Fields(text), " ")
+	if text == "" {
+		return errors.New("пустой запрос")
+	}
+	return aliceCLI("q", text)
+}
+
+// ---- клавиатура ----
+
+func notifyOn() bool {
+	_, err := os.Stat(apDir + "/etc/tgbot.notify-off")
+	return err != nil
+}
+
+func menuMarkup() string {
+	n := "🔔 Уведомления: вкл"
+	if !notifyOn() {
+		n = "🔕 Уведомления: выкл"
+	}
+	kb := [][]map[string]string{
+		{{"text": "🔉 −10", "callback_data": "vol-"}, {"text": "🔊 +10", "callback_data": "vol+"}, {"text": "🔈 Громкость?", "callback_data": "vol?"}},
+		{{"text": "⏮", "callback_data": "prev"}, {"text": "⏯", "callback_data": "toggle"}, {"text": "⏭", "callback_data": "next"}},
+		{{"text": "⏱ Таймер 5 мин", "callback_data": "timer5"}, {"text": "⏱ 10 мин", "callback_data": "timer10"}, {"text": "⏰ Будильники", "callback_data": "alarms"}},
+		{{"text": "🤫 Замолчи", "callback_data": "cancel"}, {"text": "📊 Статус", "callback_data": "status"}},
+		{{"text": "🔄 Перезапустить AirPlay/Spotify", "callback_data": "restart"}},
+		{{"text": n, "callback_data": "notify"}},
+	}
+	b, _ := json.Marshal(map[string]any{"inline_keyboard": kb})
+	return string(b)
+}
+
+func sendMenu(chat int64) {
+	params := url.Values{
+		"chat_id":      {strconv.FormatInt(chat, 10)},
+		"text":         {"Пульт колонки. Любой текст без / — команда Алисе, как голосом."},
+		"reply_markup": {menuMarkup()},
+	}
+	if err := api("sendMessage", params, nil); err != nil {
+		log.Printf("sendMessage: %v", err)
+	}
+}
+
+func toast(id, text string) {
+	api("answerCallbackQuery", url.Values{"callback_query_id": {id}, "text": {text}}, nil)
+}
+
+func setVolumeDelta(d int) string {
+	sign := "+"
+	if d < 0 {
+		sign, d = "-", -d
+	}
+	amixer("-q", "set", "Master", strconv.Itoa(d)+"%"+sign)
+	return "Громкость: " + volume()
+}
+
+func handleCallback(id string, chat, msgID int64, data string) {
+	switch data {
+	case "vol+":
+		toast(id, setVolumeDelta(10))
+	case "vol-":
+		toast(id, setVolumeDelta(-10))
+	case "vol?":
+		toast(id, "Громкость: "+volume())
+	case "toggle", "next", "prev":
+		toast(id, "Отправляю…")
+		key := map[string]string{"toggle": "p", "next": "n", "prev": "l"}[data]
+		if err := aliceCLI(key); err != nil {
+			send(chat, "Не вышло: "+err.Error())
+		}
+	case "cancel":
+		toast(id, "Тихо…")
+		aliceCLI("c")
+	case "timer5", "timer10":
+		m := strings.TrimPrefix(data, "timer")
+		toast(id, "Ставлю таймер на "+m+" мин")
+		if err := askAlice("поставь таймер на " + m + " минут"); err != nil {
+			send(chat, "Не вышло: "+err.Error())
+		}
+	case "alarms":
+		toast(id, "Алиса скажет вслух")
+		askAlice("какие у меня будильники")
+	case "status":
+		toast(id, "")
+		send(chat, sh(30*time.Second, apDir+"/ap2.sh", "status"))
+	case "restart":
+		toast(id, "Перезапускаю, ~30 с")
+		sh(90*time.Second, apDir+"/ap2.sh", "restart")
+		send(chat, "AirPlay/Spotify перезапущены.")
+	case "notify":
+		f := apDir + "/etc/tgbot.notify-off"
+		if notifyOn() {
+			os.WriteFile(f, nil, 0600)
+			toast(id, "Уведомления выключены")
+		} else {
+			os.Remove(f)
+			toast(id, "Уведомления включены")
+		}
+		api("editMessageReplyMarkup", url.Values{
+			"chat_id":      {strconv.FormatInt(chat, 10)},
+			"message_id":   {strconv.FormatInt(msgID, 10)},
+			"reply_markup": {menuMarkup()},
+		}, nil)
+	default:
+		toast(id, "")
+	}
+}
+
+// ---- текстовые команды ----
+
+const help = `Пульт — /menu (кнопки).
+
+Любой текст без / — команда Алисе, как будто сказал голосом:
+  «включи свет», «какая погода», «поставь будильник на 7:30»
+
+/timer 15 — таймер на 15 минут
+/alarm 7:30 — будильник на 7:30
+/alarms — Алиса назовёт будильники
+/pause /play /next /prev — плеер Алисы
+/stop — прервать Алису
+/say текст — произнести текст голосом Алисы (без выполнения)
+/vol, /vol 40 — громкость
+/status, /restart — AirPlay/Spotify
+/notify on|off — уведомления
 /ip — адрес колонки`
 
 func handle(chat int64, text string) {
@@ -298,8 +476,24 @@ func handle(chat int64, text string) {
 		cmd = cmd[:i]
 	}
 	arg = strings.TrimSpace(arg)
+	alice := func(q, ok string) {
+		if err := askAlice(q); err != nil {
+			send(chat, "Не вышло: "+err.Error())
+			return
+		}
+		send(chat, ok)
+	}
+	player := func(key, ok string) {
+		if err := aliceCLI(key); err != nil {
+			send(chat, "Не вышло: "+err.Error())
+			return
+		}
+		send(chat, ok)
+	}
 	switch cmd {
-	case "/start", "/help":
+	case "/start", "/menu":
+		sendMenu(chat)
+	case "/help":
 		send(chat, help)
 	case "/vol":
 		if arg == "" {
@@ -327,12 +521,65 @@ func handle(chat int64, text string) {
 			return
 		}
 		doSay(chat, arg)
+	case "/alice", "/a":
+		if arg == "" {
+			send(chat, "Напиши: /alice команда")
+			return
+		}
+		alice(arg, "Передал Алисе.")
+	case "/timer":
+		n, err := strconv.Atoi(strings.TrimSuffix(strings.Fields(arg + " x")[0], "м"))
+		if err != nil || n <= 0 || n > 600 {
+			send(chat, "Напиши: /timer 15 (минуты)")
+			return
+		}
+		alice(fmt.Sprintf("поставь таймер на %d минут", n), fmt.Sprintf("Таймер на %d мин поставлен (Алиса подтвердит голосом).", n))
+	case "/alarm":
+		hh, mm, ok := strings.Cut(strings.ReplaceAll(arg, ".", ":"), ":")
+		h, e1 := strconv.Atoi(strings.TrimSpace(hh))
+		m, e2 := strconv.Atoi(strings.TrimSpace(mm))
+		if !ok || e1 != nil || e2 != nil || h < 0 || h > 23 || m < 0 || m > 59 {
+			send(chat, "Напиши: /alarm 7:30")
+			return
+		}
+		alice(fmt.Sprintf("поставь будильник на %d:%02d", h, m), fmt.Sprintf("Будильник на %d:%02d поставлен (Алиса подтвердит голосом).", h, m))
+	case "/alarms":
+		alice("какие у меня будильники", "Алиса назовёт будильники вслух.")
+	case "/timers":
+		alice("сколько осталось на таймере", "Алиса скажет вслух.")
+	case "/pause":
+		player("o", "Пауза.")
+	case "/play":
+		player("p", "Пауза/продолжить.")
+	case "/next":
+		player("n", "Следующий трек.")
+	case "/prev":
+		player("l", "Предыдущий трек.")
+	case "/stop":
+		player("c", "Алиса прервана.")
+	case "/notify":
+		f := apDir + "/etc/tgbot.notify-off"
+		switch strings.ToLower(arg) {
+		case "off", "выкл":
+			os.WriteFile(f, nil, 0600)
+		case "on", "вкл":
+			os.Remove(f)
+		}
+		if notifyOn() {
+			send(chat, "Уведомления включены. /notify off — выключить.")
+		} else {
+			send(chat, "Уведомления выключены. /notify on — включить.")
+		}
 	default:
 		if strings.HasPrefix(text, "/") {
 			send(chat, "Не знаю такую команду.\n\n"+help)
 			return
 		}
-		doSay(chat, text)
+		if len([]rune(text)) > 500 {
+			send(chat, "Слишком длинно для Алисы, до 500 символов")
+			return
+		}
+		alice(text, "Передал Алисе.")
 	}
 }
 
@@ -349,27 +596,152 @@ func doSay(chat int64, text string) {
 	send(chat, res)
 }
 
+// ---- уведомления: следим за журналом распорядителя звука ----
+
+const ownerLog = "/data/local/tmp/ap2/owner.log"
+
+var events = []struct{ match, text string }{
+	{"AirPlay пошёл", "▶️ Подключились по AirPlay"},
+	{"AirPlay закончился", "⏹ AirPlay отключился"},
+	{"играет Spotify", "▶️ Играет Spotify"},
+	{"играет YouTube Music", "▶️ Играет YouTube Music"},
+	{"приёмник AirPlay пропал", "⚠️ Приёмник AirPlay упал — поднимаю заново"},
+	{"librespot пропал", "⚠️ Spotify Connect упал — поднимаю заново"},
+}
+
+func watchOwnerLog() {
+	var off int64 = -1
+	var last string
+	var lastAt time.Time
+	for {
+		time.Sleep(3 * time.Second)
+		st, err := os.Stat(ownerLog)
+		if err != nil {
+			continue
+		}
+		if off < 0 || st.Size() < off {
+			// первый запуск — начинаем с конца; файл обрезали — с начала
+			if off < 0 {
+				off = st.Size()
+				continue
+			}
+			off = 0
+		}
+		if st.Size() == off {
+			continue
+		}
+		f, err := os.Open(ownerLog)
+		if err != nil {
+			continue
+		}
+		f.Seek(off, io.SeekStart)
+		data, _ := io.ReadAll(io.LimitReader(f, 64*1024))
+		f.Close()
+		// читаем только целые строки
+		if i := bytes.LastIndexByte(data, '\n'); i >= 0 {
+			data = data[:i+1]
+		} else {
+			continue
+		}
+		off += int64(len(data))
+		if !notifyOn() {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			for _, e := range events {
+				if !strings.Contains(line, e.match) {
+					continue
+				}
+				// одинаковые события подряд в течение минуты не дублируем
+				if e.text == last && time.Since(lastAt) < time.Minute {
+					break
+				}
+				last, lastAt = e.text, time.Now()
+				send(allowedID, e.text)
+				break
+			}
+		}
+	}
+}
+
+func bootNotify() {
+	b, err := os.ReadFile("/proc/uptime")
+	if err != nil {
+		return
+	}
+	sec, _ := strconv.ParseFloat(strings.Fields(string(b) + " 0")[0], 64)
+	if sec < 300 && notifyOn() {
+		send(allowedID, "🔌 Колонка включилась и на связи. /menu — пульт")
+	}
+}
+
+func setCommands() {
+	cmds := []map[string]string{
+		{"command": "menu", "description": "Пульт с кнопками"},
+		{"command": "timer", "description": "Таймер: /timer 15"},
+		{"command": "alarm", "description": "Будильник: /alarm 7:30"},
+		{"command": "pause", "description": "Пауза"},
+		{"command": "next", "description": "Следующий трек"},
+		{"command": "vol", "description": "Громкость: /vol 40"},
+		{"command": "say", "description": "Произнести текст"},
+		{"command": "status", "description": "Статус AirPlay/Spotify"},
+		{"command": "help", "description": "Все команды"},
+	}
+	b, _ := json.Marshal(cmds)
+	if err := api("setMyCommands", url.Values{"commands": {string(b)}}, nil); err != nil {
+		log.Printf("setMyCommands: %v", err)
+	}
+}
+
+func safe(f func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("panic: %v", r)
+		}
+	}()
+	f()
+}
+
 func main() {
 	log.SetFlags(log.LstdFlags)
 	if err := loadConf(); err != nil {
 		log.Fatalf("конфиг %s: %v", confPath, err)
 	}
 	log.Printf("tgbot запущен, разрешён пользователь %d", allowedID)
+	go safe(watchOwnerLog)
+	commandsSet, booted := false, false
 	var offset int64
 	for {
 		var ups []update
 		err := api("getUpdates", url.Values{
 			"timeout":         {"50"},
 			"offset":          {strconv.FormatInt(offset, 10)},
-			"allowed_updates": {`["message"]`},
+			"allowed_updates": {`["message","callback_query"]`},
 		}, &ups)
 		if err != nil {
 			log.Printf("%v", err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
+		if !commandsSet {
+			commandsSet = true
+			go safe(setCommands)
+		}
+		if !booted {
+			booted = true
+			go safe(bootNotify)
+		}
 		for _, u := range ups {
 			offset = u.UpdateID + 1
+			if c := u.Callback; c != nil {
+				if c.From.ID != allowedID || c.Message == nil {
+					toast(c.ID, "")
+					continue
+				}
+				// кнопки отвечают сразу, медленные действия идут в фоне
+				go safe(func() { handleCallback(c.ID, c.Message.Chat.ID, c.Message.MessageID, c.Data) })
+				continue
+			}
 			m := u.Message
 			if m == nil || m.From == nil || m.Text == "" {
 				continue
@@ -378,14 +750,7 @@ func main() {
 				log.Printf("чужой пользователь %d — игнор", m.From.ID)
 				continue
 			}
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						log.Printf("panic: %v", r)
-					}
-				}()
-				handle(m.Chat.ID, m.Text)
-			}()
+			go safe(func() { handle(m.Chat.ID, m.Text) })
 		}
 	}
 }
