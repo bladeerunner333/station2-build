@@ -543,6 +543,7 @@ const help = `Пульт — /menu (кнопки).
 /vol, /vol 40 — громкость
 /status, /restart — AirPlay/Spotify
 /noteblock — кнопка Алисы играет ноты из Minecraft (/noteblock бас, /noteblock off)
+/earcon on|off — звук отклика на «Алиса»
 /notify on|off — уведомления
 /ip — адрес колонки`
 
@@ -640,6 +641,19 @@ func handle(chat int64, text string) {
 		player("l", "Предыдущий трек.")
 	case "/stop":
 		player("c", "Алиса прервана.")
+	case "/earcon":
+		f := apDir + "/etc/tgbot.earcon-off"
+		switch strings.ToLower(arg) {
+		case "off", "выкл":
+			os.WriteFile(f, nil, 0600)
+		case "on", "вкл":
+			os.Remove(f)
+		}
+		if earconOn() {
+			send(chat, "Звук отклика на «Алиса» включён. /earcon off — выключить.")
+		} else {
+			send(chat, "Звук отклика на «Алиса» выключен. /earcon on — включить.")
+		}
 	case "/noteblock", "/nb":
 		handleNoteblock(chat, arg)
 	case "/notify":
@@ -795,6 +809,7 @@ func main() {
 	}
 	log.Printf("tgbot запущен, разрешён пользователь %d", allowedID)
 	go safe(watchOwnerLog)
+	go safe(watchAliceState)
 	commandsSet, booted := false, false
 	var offset int64
 	for {
