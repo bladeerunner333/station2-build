@@ -28,6 +28,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -343,11 +344,60 @@ func aliceCLI(lines ...string) error {
 }
 
 func askAlice(text string) error {
+	_, err := askAliceAnswer(text)
+	return err
+}
+
+// askAliceAnswer шлёт текстовый запрос и ловит текст ответа Алисы в локальном канале
+// 9875: он приходит в поле 252 → 3 → 1 (пульт работает в «тихом» режиме, вслух Алиса
+// не отвечает, поэтому ответ пересылаем в Telegram).
+func askAliceAnswer(text string) (string, error) {
 	text = strings.Join(strings.Fields(text), " ")
 	if text == "" {
-		return errors.New("пустой запрос")
+		return "", errors.New("пустой запрос")
 	}
-	return aliceCLI("q", text)
+	answer := make(chan string, 1)
+	conn, err := net.DialTimeout("tcp", ipcAddr, 3*time.Second)
+	if err == nil {
+		defer conn.Close()
+		conn.Write(rpcFrame(20, pbBytes(1, []byte("AliceCapability"))))
+		conn.SetReadDeadline(time.Now().Add(20 * time.Second))
+		go func() {
+			hdr := make([]byte, 4)
+			for {
+				if _, err := io.ReadFull(conn, hdr); err != nil {
+					return
+				}
+				n := binary.LittleEndian.Uint32(hdr)
+				if n == 0 || n > 4*1024*1024 {
+					return
+				}
+				buf := make([]byte, n)
+				if _, err := io.ReadFull(conn, buf); err != nil {
+					return
+				}
+				_, r1 := fields(buf)
+				_, r2 := fields(r1[252])
+				_, r3 := fields(r2[3])
+				if t := strings.TrimSpace(string(r3[1])); t != "" && utf8.ValidString(t) {
+					select {
+					case answer <- t:
+					default:
+					}
+					return
+				}
+			}
+		}()
+	}
+	if err := aliceCLI("q", text); err != nil {
+		return "", err
+	}
+	select {
+	case a := <-answer:
+		return a, nil
+	case <-time.After(8 * time.Second):
+		return "", nil
+	}
 }
 
 // ---- клавиатура ----
@@ -418,12 +468,19 @@ func handleCallback(id string, chat, msgID int64, data string) {
 	case "timer5", "timer10":
 		m := strings.TrimPrefix(data, "timer")
 		toast(id, "Ставлю таймер на "+m+" мин")
-		if err := askAlice("поставь таймер на " + m + " минут"); err != nil {
+		a, err := askAliceAnswer("поставь таймер на " + m + " минут")
+		if err != nil {
 			send(chat, "Не вышло: "+err.Error())
+		} else if a != "" {
+			send(chat, "🗣 "+a)
 		}
 	case "alarms":
-		toast(id, "Алиса скажет вслух")
-		askAlice("какие у меня будильники")
+		toast(id, "Спрашиваю Алису…")
+		if a, _ := askAliceAnswer("какие у меня будильники"); a != "" {
+			send(chat, "🗣 "+a)
+		} else {
+			send(chat, "Алиса не ответила.")
+		}
 	case "status":
 		toast(id, "")
 		send(chat, sh(30*time.Second, apDir+"/ap2.sh", "status"))
@@ -455,7 +512,8 @@ func handleCallback(id string, chat, msgID int64, data string) {
 const help = `Пульт — /menu (кнопки).
 
 Любой текст без / — команда Алисе, как будто сказал голосом:
-  «включи свет», «какая погода», «поставь будильник на 7:30»
+  «включи свет», «какая погода», «поставь будильник на 7:30».
+  Ответ Алисы приходит сюда текстом.
 
 /timer 15 — таймер на 15 минут
 /alarm 7:30 — будильник на 7:30
@@ -477,8 +535,13 @@ func handle(chat int64, text string) {
 	}
 	arg = strings.TrimSpace(arg)
 	alice := func(q, ok string) {
-		if err := askAlice(q); err != nil {
+		a, err := askAliceAnswer(q)
+		if err != nil {
 			send(chat, "Не вышло: "+err.Error())
+			return
+		}
+		if a != "" {
+			send(chat, "🗣 "+a)
 			return
 		}
 		send(chat, ok)
@@ -533,7 +596,7 @@ func handle(chat int64, text string) {
 			send(chat, "Напиши: /timer 15 (минуты)")
 			return
 		}
-		alice(fmt.Sprintf("поставь таймер на %d минут", n), fmt.Sprintf("Таймер на %d мин поставлен (Алиса подтвердит голосом).", n))
+		alice(fmt.Sprintf("поставь таймер на %d минут", n), fmt.Sprintf("Таймер на %d мин отправлен Алисе.", n))
 	case "/alarm":
 		hh, mm, ok := strings.Cut(strings.ReplaceAll(arg, ".", ":"), ":")
 		h, e1 := strconv.Atoi(strings.TrimSpace(hh))
@@ -542,11 +605,11 @@ func handle(chat int64, text string) {
 			send(chat, "Напиши: /alarm 7:30")
 			return
 		}
-		alice(fmt.Sprintf("поставь будильник на %d:%02d", h, m), fmt.Sprintf("Будильник на %d:%02d поставлен (Алиса подтвердит голосом).", h, m))
+		alice(fmt.Sprintf("поставь будильник на %d:%02d", h, m), fmt.Sprintf("Будильник на %d:%02d отправлен Алисе.", h, m))
 	case "/alarms":
-		alice("какие у меня будильники", "Алиса назовёт будильники вслух.")
+		alice("какие у меня будильники", "Алиса не ответила.")
 	case "/timers":
-		alice("сколько осталось на таймере", "Алиса скажет вслух.")
+		alice("сколько осталось на таймере", "Алиса не ответила.")
 	case "/pause":
 		player("o", "Пауза.")
 	case "/play":
