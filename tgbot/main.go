@@ -62,6 +62,10 @@ func loadConf() error {
 			token = v
 		case "ALLOWED_ID":
 			allowedID, _ = strconv.ParseInt(v, 10, 64)
+		case "WEB_PIN":
+			webPIN = v
+		case "WEB_PORT":
+			webPort = v
 		}
 	}
 	if token == "" || allowedID == 0 {
@@ -804,12 +808,16 @@ func safe(f func()) {
 
 func main() {
 	log.SetFlags(log.LstdFlags)
-	if err := loadConf(); err != nil {
-		log.Fatalf("конфиг %s: %v", confPath, err)
+	confErr := loadConf()
+	// веб-пульт и свой звук отклика работают и без Telegram
+	go safe(serveWeb)
+	go safe(watchAliceState)
+	if confErr != nil {
+		log.Printf("Telegram выключен (конфиг %s: %v), работает только веб-пульт", confPath, confErr)
+		select {}
 	}
 	log.Printf("tgbot запущен, разрешён пользователь %d", allowedID)
 	go safe(watchOwnerLog)
-	go safe(watchAliceState)
 	commandsSet, booted := false, false
 	var offset int64
 	for {

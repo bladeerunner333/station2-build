@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0e0f13">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Станция">
+<title>Станция 2</title>
+<style>
+  :root {
+    --bg: #0e0f13; --surface: #17191f; --surface2: #1f222a; --line: #2a2e38;
+    --text: #eceef2; --muted: #8b92a0; --accent: #8b6cff; --accent2: #b39dff;
+    --ok: #3ecf8e; --warn: #ffb547; --err: #ff5c6c;
+    --r: 16px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  body { padding: max(16px, env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom)); }
+  .wrap { max-width: 560px; margin: 0 auto; display: grid; gap: 14px; }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 4px 2px 2px; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+  .chip { font-size: 13px; color: var(--muted); background: var(--surface); border: 1px solid var(--line);
+    border-radius: 999px; padding: 5px 10px; display: inline-flex; gap: 6px; align-items: center; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--ok); } .dot.err { background: var(--err); }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 14px; }
+  .card h2 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase;
+    letter-spacing: .06em; margin: 0 0 10px; }
+  button { font: inherit; color: var(--text); background: var(--surface2); border: 1px solid var(--line);
+    border-radius: 12px; padding: 12px; cursor: pointer; transition: transform .08s, background .15s;
+    white-space: nowrap; }
+  .grid4 button { padding: 12px 4px; font-size: 15px; }
+  .row > button:not([style]) { flex: none; }
+  button:active { transform: scale(.97); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button:disabled { opacity: .5; }
+  input[type=text], input[type=number], input[type=time], input[type=password] {
+    font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line);
+    border-radius: 12px; padding: 12px; width: 100%; min-width: 0; outline: none; }
+  input:focus { border-color: var(--accent); }
+  .row { display: flex; gap: 8px; }
+  .grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .seg { display: flex; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 3px; margin-bottom: 10px; }
+  .seg button { flex: 1; border: 0; background: transparent; padding: 8px; font-size: 14px; color: var(--muted); }
+  .seg button.on { background: var(--surface2); color: var(--text); }
+  #log { display: grid; gap: 8px; margin-top: 10px; max-height: 280px; overflow-y: auto; }
+  #log:empty { display: none; }
+  .msg { padding: 10px 12px; border-radius: 14px; font-size: 15px; max-width: 88%; word-wrap: break-word; }
+  .msg.me { background: var(--accent); color: #fff; justify-self: end; border-bottom-right-radius: 4px; }
+  .msg.her { background: var(--surface2); justify-self: start; border-bottom-left-radius: 4px; }
+  .msg.sys { background: transparent; color: var(--muted); font-size: 13px; justify-self: center; padding: 2px; }
+  .vol { display: flex; align-items: center; gap: 10px; }
+  .vol output { min-width: 44px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+  input[type=range] { flex: 1; accent-color: var(--accent); height: 28px; }
+  .player button { font-size: 22px; padding: 14px 0; }
+  .toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; }
+  .toggle + .toggle { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 6px; }
+  .toggle small { display: block; color: var(--muted); font-size: 13px; }
+  .sw { position: relative; width: 50px; height: 30px; flex: none; }
+  .sw input { opacity: 0; width: 0; height: 0; }
+  .sw span { position: absolute; inset: 0; background: var(--line); border-radius: 999px; transition: .2s; }
+  .sw span::before { content: ""; position: absolute; width: 24px; height: 24px; left: 3px; top: 3px;
+    background: #fff; border-radius: 50%; transition: .2s; }
+  .sw input:checked + span { background: var(--ok); }
+  .sw input:checked + span::before { transform: translateX(20px); }
+  .insts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .insts button { padding: 8px 12px; font-size: 14px; border-radius: 999px; }
+  .insts button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  pre { white-space: pre-wrap; font-size: 12px; color: var(--muted); background: var(--bg);
+    border-radius: 10px; padding: 10px; margin: 10px 0 0; max-height: 240px; overflow: auto; }
+  pre:empty { display: none; }
+  .toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom)); transform: translateX(-50%) translateY(120px);
+    background: var(--surface2); border: 1px solid var(--line); padding: 10px 16px; border-radius: 12px;
+    font-size: 14px; transition: transform .25s, opacity .25s; max-width: calc(100% - 32px); z-index: 10;
+    opacity: 0; visibility: hidden; }
+  .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; visibility: visible; }
+  #login { display: none; }
+  .hidden { display: none !important; }
+  .muted { color: var(--muted); font-size: 13px; margin: 8px 2px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Станция 2</h1>
+    <span class="chip"><span class="dot" id="dot"></span><span id="conn">…</span></span>
+  </header>
+
+  <section class="card" id="login">
+    <h2>Вход</h2>
+    <div class="row">
+      <input type="password" id="pin" inputmode="numeric" placeholder="PIN" autocomplete="current-password">
+      <button class="primary" id="loginBtn">Войти</button>
+    </div>
+  </section>
+
+  <div id="app" class="wrap" style="gap:14px">
+    <section class="card">
+      <div class="seg" role="tablist">
+        <button class="on" data-mode="alice">Команда Алисе</button>
+        <button data-mode="say">Произнести</button>
+      </div>
+      <form class="row" id="askForm">
+        <input type="text" id="ask" placeholder="Например: какая погода" autocomplete="off" enterkeyhint="send">
+        <button class="primary" type="submit" aria-label="Отправить">➤</button>
+      </form>
+      <div id="log" aria-live="polite"></div>
+    </section>
+
+    <section class="card">
+      <h2>Громкость</h2>
+      <div class="vol">
+        <button data-vol="-10" aria-label="Тише">−</button>
+        <input type="range" id="vol" min="0" max="100" step="1" aria-label="Громкость">
+        <button data-vol="10" aria-label="Громче">+</button>
+        <output id="volOut">—</output>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Плеер Алисы</h2>
+      <div class="grid4 player">
+        <button data-player="prev" aria-label="Назад">⏮</button>
+        <button data-player="toggle" aria-label="Пауза или продолжить">⏯</button>
+        <button data-player="next" aria-label="Дальше">⏭</button>
+        <button data-player="stop" aria-label="Замолчи">🤫</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Таймер и будильник</h2>
+      <div class="grid4">
+        <button data-timer="1">1 мин</button>
+        <button data-timer="5">5 мин</button>
+        <button data-timer="10">10 мин</button>
+        <button data-timer="15">15 мин</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <input type="number" id="timerMin" min="1" max="600" placeholder="минут" inputmode="numeric">
+        <button id="timerBtn">⏱ Таймер</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <input type="time" id="alarmTime" value="07:30">
+        <button id="alarmBtn">⏰ Будильник</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button style="flex:1;white-space:normal" data-ask="какие у меня будильники">Какие будильники?</button>
+        <button style="flex:1;white-space:normal" data-ask="сколько осталось на таймере">Сколько на таймере?</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Нотный блок</h2>
+      <div class="toggle">
+        <div>Кнопка Алисы играет ноты<small>Коротко — следующая нота, долго — другой инструмент</small></div>
+        <label class="sw"><input type="checkbox" id="nb"><span></span></label>
+      </div>
+      <div class="insts" id="insts"></div>
+    </section>
+
+    <section class="card">
+      <h2>Настройки</h2>
+      <div class="toggle">
+        <div>Звук отклика на «Алиса»<small>Орб из Minecraft, когда она начинает слушать</small></div>
+        <label class="sw"><input type="checkbox" id="earcon"><span></span></label>
+      </div>
+      <div class="toggle" id="notifyRow">
+        <div>Уведомления в Telegram<small>AirPlay, Spotify, перезагрузки</small></div>
+        <label class="sw"><input type="checkbox" id="notify"><span></span></label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>AirPlay и Spotify</h2>
+      <div class="row">
+        <button style="flex:1" id="statusBtn">📊 Статус</button>
+        <button style="flex:1" id="restartBtn">🔄 Перезапуск</button>
+      </div>
+      <pre id="statusOut"></pre>
+    </section>
+    <p class="muted">Работает в домашней сети без VPN. Добавь на экран «Домой», чтобы открывать как приложение.</p>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const INSTS = [["harp","арфа"],["bell","колокольчик"],["bass","бас"],["flute","флейта"],["guitar","гитара"],["xylo","ксилофон"],["bit","8-бит"]];
+let mode = "alice", state = {};
+
+function toast(t) {
+  const el = $("#toast"); el.textContent = t; el.classList.add("show");
+  clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove("show"), 2600);
+}
+function setConn(ok, text) { $("#dot").className = "dot " + (ok ? "ok" : "err"); $("#conn").textContent = text; }
+
+async function call(path, body) {
+  try {
+    const r = await fetch(path, body === undefined ? {} : {
+      method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+    const d = await r.json().catch(() => ({}));
+    if (r.status === 401) { showLogin(); return null; }
+    setConn(true, "на связи");
+    if (d.ok === false && d.error) toast(d.error);
+    return d;
+  } catch (e) { setConn(false, "нет связи"); toast("Колонка не отвечает"); return null; }
+}
+
+function showLogin() { $("#login").style.display = "block"; $("#app").classList.add("hidden"); setConn(false, "нужен PIN"); }
+$("#loginBtn").onclick = async () => {
+  const r = await fetch("/api/login", {method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({pin: $("#pin").value})});
+  if (r.ok) { $("#login").style.display = "none"; $("#app").classList.remove("hidden"); refresh(); }
+  else toast("Неверный PIN");
+};
+
+function addMsg(text, who) {
+  const el = document.createElement("div"); el.className = "msg " + who; el.textContent = text;
+  $("#log").appendChild(el); $("#log").scrollTop = $("#log").scrollHeight; return el;
+}
+
+document.querySelectorAll(".seg button").forEach(b => b.onclick = () => {
+  document.querySelectorAll(".seg button").forEach(x => x.classList.toggle("on", x === b));
+  mode = b.dataset.mode;
+  $("#ask").placeholder = mode === "alice" ? "Например: какая погода" : "Текст, который она скажет вслух";
+});
+
+async function ask(text) {
+  addMsg(text, "me");
+  const wait = addMsg("…", "sys");
+  const d = await call(mode === "alice" ? "/api/alice" : "/api/say", {text});
+  wait.remove();
+  if (!d || d.ok === false) return;
+  if (d.answer) addMsg(d.answer, mode === "alice" ? "her" : "sys");
+  else addMsg(mode === "alice" ? "Передал Алисе" : "Готово", "sys");
+}
+$("#askForm").onsubmit = e => { e.preventDefault(); const t = $("#ask").value.trim(); if (!t) return; $("#ask").value = ""; ask(t); };
+document.querySelectorAll("[data-ask]").forEach(b => b.onclick = async () => {
+  const prev = mode; mode = "alice"; await ask(b.dataset.ask); mode = prev;
+});
+
+function showVol(v) { if (v >= 0) { $("#vol").value = v; $("#volOut").textContent = v + "%"; } }
+document.querySelectorAll("[data-vol]").forEach(b => b.onclick = async () => {
+  const d = await call("/api/volume", {delta: +b.dataset.vol}); if (d) showVol(d.volume);
+});
+$("#vol").oninput = () => { $("#volOut").textContent = $("#vol").value + "%"; };
+$("#vol").onchange = async () => { const d = await call("/api/volume", {set: +$("#vol").value}); if (d) showVol(d.volume); };
+
+document.querySelectorAll("[data-player]").forEach(b => b.onclick = async () => {
+  b.disabled = true; const d = await call("/api/player", {action: b.dataset.player}); b.disabled = false;
+  if (d && d.ok) toast("Отправлено");
+});
+
+async function timer(m) {
+  const d = await call("/api/timer", {minutes: +m});
+  if (d && d.ok) { toast(d.answer || ("Таймер на " + m + " мин")); if (d.answer) addMsg(d.answer, "her"); }
+}
+document.querySelectorAll("[data-timer]").forEach(b => b.onclick = () => timer(b.dataset.timer));
+$("#timerBtn").onclick = () => { const m = $("#timerMin").value; if (m) timer(m); };
+$("#alarmBtn").onclick = async () => {
+  const t = $("#alarmTime").value; if (!t) return;
+  const d = await call("/api/alarm", {time: t});
+  if (d && d.ok) { toast(d.answer || ("Будильник на " + t)); if (d.answer) addMsg(d.answer, "her"); }
+};
+
+function renderInsts() {
+  $("#insts").innerHTML = "";
+  INSTS.forEach(([id, name]) => {
+    const b = document.createElement("button"); b.textContent = name;
+    b.className = state.instrument === id ? "on" : "";
+    b.onclick = async () => {
+      const d = await call("/api/toggle", state.noteblock ? {name: "instrument", instrument: id} : {name: "noteblock", on: true, instrument: id});
+      if (d && d.ok) { applyState(d); toast("Инструмент: " + name); }
+    };
+    $("#insts").appendChild(b);
+  });
+}
+function applyState(d) {
+  state = d; showVol(d.volume);
+  $("#nb").checked = !!d.noteblock; $("#earcon").checked = !!d.earcon; $("#notify").checked = !!d.notify;
+  $("#notifyRow").classList.toggle("hidden", !d.telegram);
+  renderInsts();
+}
+for (const name of ["nb", "earcon", "notify"]) {
+  $("#" + name).onchange = async e => {
+    const d = await call("/api/toggle", {name: name === "nb" ? "noteblock" : name, on: e.target.checked});
+    if (d && d.ok) applyState(d); else e.target.checked = !e.target.checked;
+  };
+}
+
+$("#statusBtn").onclick = async () => { $("#statusOut").textContent = "…"; const d = await call("/api/status"); $("#statusOut").textContent = d ? d.text : ""; };
+$("#restartBtn").onclick = async () => {
+  if (!confirm("Перезапустить AirPlay и Spotify? Музыка прервётся секунд на 30.")) return;
+  toast("Перезапускаю…"); const d = await call("/api/restart", {}); if (d && d.ok) toast("Готово");
+};
+
+async function refresh() { const d = await call("/api/state"); if (d && d.ok) applyState(d); }
+refresh();
+setInterval(() => { if (!document.hidden) refresh(); }, 15000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+</script>
+</body>
+</html>
